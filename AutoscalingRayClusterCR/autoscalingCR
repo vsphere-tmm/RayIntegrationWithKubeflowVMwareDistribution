@@ -1,0 +1,83 @@
+cat << EOF | kubectl apply -f -
+apiVersion: ray.io/v1alpha1
+kind: RayCluster
+metadata:
+  labels:
+    controller-tools.k8s.io: "1.0"
+  name: raycluster-autoscaler
+  namespace: ray
+spec:
+  rayVersion: '2.2.0'
+  enableInTreeAutoscaling: true
+  autoscalerOptions:
+    upscalingMode: Default
+    idleTimeoutSeconds: 60
+    imagePullPolicy: IfNotPresent
+    securityContext: {}
+    env: []
+    envFrom: []
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+  headGroupSpec:
+    serviceType: ClusterIP # optional
+    rayStartParams:
+      dashboard-host: '0.0.0.0'
+      block: 'true'
+    template:
+      spec:
+        containers:
+        - name: ray-head
+          image: rayproject/ray-ml:2.2.0-py38-gpu
+          ports:
+          - containerPort: 6379
+            name: gcs
+          - containerPort: 8265
+            name: dashboard
+          - containerPort: 10001
+            name: client
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh","-c","ray stop"]
+          resources:
+            limits:
+              cpu: "4"
+              memory: "32G"
+            requests:
+              cpu: "4"
+              memory: "16G"
+  workerGroupSpecs:
+  - replicas: 1
+    minReplicas: 1
+    maxReplicas: 10
+    groupName: small-group
+    rayStartParams:
+      num-gpus: "1"
+    template:
+      spec:
+        initContainers:
+        - name: init
+          image: busybox:1.28
+          command: ['sh', '-c', "until nslookup $RAY_IP.$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).svc.cluster.local; do echo waiting for K8s Service $RAY_IP; sleep 2; done"]
+        containers:
+        - name: ray-worker
+          image: rayproject/ray-ml:2.2.0-py38-gpu
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh","-c","ray stop"]
+          resources:
+            limits:
+              cpu: "16"
+              memory: "64G"
+              nvidia.com/gpu: 1
+            requests:
+              cpu: "8"
+              memory: "32G"
+              nvidia.com/gpu: 1
+EOF
